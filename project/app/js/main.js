@@ -39,6 +39,30 @@ addEventButton.addEventListener('click', addAndPostEvent);
 Notification.requestPermission();
 
 // TODO - create indexedDB database
+function createIndexedDB(){
+  if(!('indexedDB' in window)){return null;}
+  return idb.open('dashboardr', 1, function(upgradeDb){
+    if(!upgradeDb.objectStoreNames.contains('events')){
+      const eventsOS = upgradeDb.createObjectStore('events', {keyPath: 'id'});
+    }
+  });
+}
+
+const dbPromise = createIndexedDB();
+
+function saveEventDataLocally(events) {
+  if (!('indexedDB' in window)) {return null;}
+  return dbPromise.then(db => {
+    const tx = db.transaction('events', 'readwrite');
+    const store = tx.objectStore('events');
+    return Promise.all(events.map(event => store.put(event)))
+    .catch(() => {
+      tx.abort();
+      throw Error('Events were not added to the store');
+    });
+  });
+}
+
 
 loadContentNetworkFirst();
 
@@ -46,8 +70,29 @@ function loadContentNetworkFirst() {
   getServerData()
   .then(dataFromNetwork => {
     updateUI(dataFromNetwork);
+    saveEventDataLocally(dataFromNetwork)
+    .then(() => {
+      setLastUpdated(new Date());
+      messageDataSaved();
+    }).catch(
+      error => {
+        messageSaveError();
+        console.warn(error);
+      }
+    );
   }).catch(err => { // if we can't connect to the server...
     console.log('Network requests have failed, this is expected if offline');
+    getLocalEventData()
+    .then(
+      offlineData => {
+        if(!offlineData.length){
+          messageNoData();
+        }else{
+          messageOffline();
+          updateUI(offlineData);
+        }
+      }
+    )
   });
 }
 
@@ -74,6 +119,7 @@ function addAndPostEvent(e) {
   updateUI([data]);
 
   // TODO - save event data locally
+  saveEventDataLocally([data]);
 
   const headers = new Headers({'Content-Type': 'application/json'});
   const body = JSON.stringify(data);
@@ -135,4 +181,13 @@ function getLastUpdated() {
 
 function setLastUpdated(date) {
   localStorage.setItem('lastUpdated', date);
+}
+
+function getLocalEventData() {
+  if (!('indexedDB' in window)) {return null;}
+  return dbPromise.then(db => {
+    const tx = db.transaction('events', 'readonly');
+    const store = tx.objectStore('events');
+    return store.getAll();
+  });
 }
